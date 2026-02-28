@@ -1,0 +1,88 @@
+package com.quickanswer.ui
+
+import android.os.Build
+import android.os.Bundle
+import android.telecom.TelecomManager
+import android.view.WindowManager
+import androidx.appcompat.app.AppCompatActivity
+import com.quickanswer.databinding.ActivityCallOverlayBinding
+
+class CallOverlayActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityCallOverlayBinding
+    private var callerNumber: String = "Bilinmiyor"
+
+    companion object {
+        const val EXTRA_CALLER_NUMBER = "caller_number"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Ekranı aç ve kilidi bypass et
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        }
+
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        binding = ActivityCallOverlayBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        callerNumber = intent.getStringExtra(EXTRA_CALLER_NUMBER) ?: "Bilinmiyor"
+        binding.tvCallerNumber.text = callerNumber
+
+        // MAVİ BUTON - Çağrıyı kabul et
+        binding.btnAnswerCall.setOnClickListener {
+            answerCallImmediately()
+        }
+
+        // Reddet butonu
+        binding.btnRejectCall.setOnClickListener {
+            rejectCall()
+            finish()
+        }
+    }
+
+    private fun answerCallImmediately() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val telecomManager = getSystemService(TELECOM_SERVICE) as TelecomManager
+                telecomManager.acceptRingingCall()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback: Runtime.exec yöntemi
+            try {
+                Runtime.getRuntime().exec(arrayOf("input", "keyevent", "79"))
+            } catch (ex: Exception) {
+                ex.printStackTrace()
+            }
+        }
+        finish()
+    }
+
+    private fun rejectCall() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val telecomManager = getSystemService(TELECOM_SERVICE) as TelecomManager
+                telecomManager.endCall()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    override fun onBackPressed() {
+        // Geri tuşunu devre dışı bırak - kullanıcı sadece butonlarla işlem yapabilsin
+    }
+}

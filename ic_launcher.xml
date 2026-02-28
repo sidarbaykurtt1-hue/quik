@@ -1,0 +1,156 @@
+package com.quickanswer.ui
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.quickanswer.R
+import com.quickanswer.databinding.ActivityMainBinding
+import com.quickanswer.service.CallMonitorService
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+
+    private val requiredPermissions = buildList {
+        add(Manifest.permission.READ_PHONE_STATE)
+        add(Manifest.permission.ANSWER_PHONE_CALLS)
+        add(Manifest.permission.CALL_PHONE)
+        add(Manifest.permission.READ_CALL_LOG)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }.toTypedArray()
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            checkOverlayPermission()
+        } else {
+            showPermissionRationaleDialog()
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        setupUI()
+        checkAndRequestPermissions()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateServiceStatus()
+    }
+
+    private fun setupUI() {
+        binding.btnToggleService.setOnClickListener {
+            toggleService()
+        }
+
+        binding.btnPermissions.setOnClickListener {
+            checkAndRequestPermissions()
+        }
+    }
+
+    private fun checkAndRequestPermissions() {
+        val missingPermissions = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isEmpty()) {
+            checkOverlayPermission()
+        } else {
+            permissionLauncher.launch(missingPermissions.toTypedArray())
+        }
+    }
+
+    private fun checkOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Overlay İzni Gerekli")
+                .setMessage("Gelen çağrılarda ekranın üzerinde buton göstermek için bu izin gereklidir. Ayarlara gidip izni etkinleştirin.")
+                .setPositiveButton("Ayarlara Git") { _, _ ->
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                }
+                .setNegativeButton("İptal", null)
+                .show()
+        } else {
+            startCallMonitorService()
+        }
+    }
+
+    private fun startCallMonitorService() {
+        val intent = Intent(this, CallMonitorService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        updateServiceStatus()
+    }
+
+    private fun toggleService() {
+        val serviceRunning = CallMonitorService.isRunning
+        if (serviceRunning) {
+            stopService(Intent(this, CallMonitorService::class.java))
+            Toast.makeText(this, "Servis durduruldu", Toast.LENGTH_SHORT).show()
+        } else {
+            checkAndRequestPermissions()
+        }
+        updateServiceStatus()
+    }
+
+    private fun updateServiceStatus() {
+        val isRunning = CallMonitorService.isRunning
+        val hasOverlay = Settings.canDrawOverlays(this)
+        val hasPermissions = requiredPermissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+
+        if (isRunning && hasOverlay && hasPermissions) {
+            binding.statusIndicator.setBackgroundResource(R.drawable.circle_green)
+            binding.tvStatus.text = "✅ Aktif - Çağrılar izleniyor"
+            binding.btnToggleService.text = "Servisi Durdur"
+        } else {
+            binding.statusIndicator.setBackgroundResource(R.drawable.circle_red)
+            binding.tvStatus.text = if (!hasPermissions || !hasOverlay) 
+                "⚠️ İzin eksik" else "🔴 Pasif"
+            binding.btnToggleService.text = "Servisi Başlat"
+        }
+
+        binding.tvPermStatus.text = if (hasPermissions && hasOverlay)
+            "✅ Tüm izinler verildi" else "⚠️ Eksik izinler var"
+    }
+
+    private fun showPermissionRationaleDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("İzinler Gerekli")
+            .setMessage("Bu uygulama gelen çağrıları algılamak ve kabul etmek için telefon izinlerine ihtiyaç duyar.")
+            .setPositiveButton("Tekrar İste") { _, _ ->
+                permissionLauncher.launch(requiredPermissions)
+            }
+            .setNegativeButton("Ayarlara Git") { _, _ ->
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            }
+            .show()
+    }
+}

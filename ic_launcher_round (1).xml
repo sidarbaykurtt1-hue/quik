@@ -1,0 +1,151 @@
+package com.quickanswer.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Intent
+import android.graphics.Color
+import android.os.Build
+import android.os.IBinder
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
+import androidx.core.app.NotificationCompat
+import com.quickanswer.R
+import com.quickanswer.ui.CallOverlayActivity
+import com.quickanswer.ui.MainActivity
+
+class CallMonitorService : Service() {
+
+    companion object {
+        var isRunning = false
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "call_monitor_channel"
+    }
+
+    private var telephonyManager: TelephonyManager? = null
+    private var phoneStateListener: PhoneStateListener? = null
+    private var telephonyCallback: Any? = null // TelephonyCallback for API 31+
+
+    override fun onCreate() {
+        super.onCreate()
+        isRunning = true
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification())
+        registerPhoneListener()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY // Servis öldürülse bile yeniden başlasın
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isRunning = false
+        unregisterPhoneListener()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Çağrı İzleme",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "QuickAnswer arka planda çalışıyor"
+                setShowBadge(false)
+                enableLights(false)
+                enableVibration(false)
+                lightColor = Color.BLUE
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("QuickAnswer Aktif")
+            .setContentText("Gelen çağrılar izleniyor...")
+            .setSmallIcon(R.drawable.ic_phone)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun registerPhoneListener() {
+        telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+ için TelephonyCallback
+            val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                override fun onCallStateChanged(state: Int) {
+                    handleCallState(state, null)
+                }
+            }
+            telephonyCallback = callback
+            telephonyManager?.registerTelephonyCallback(mainExecutor, callback)
+        } else {
+            // Eski API için PhoneStateListener
+            phoneStateListener = object : PhoneStateListener() {
+                @Deprecated("Deprecated in Java")
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    handleCallState(state, phoneNumber)
+                }
+            }
+            telephonyManager?.listen(
+                phoneStateListener,
+                PhoneStateListener.LISTEN_CALL_STATE
+            )
+        }
+    }
+
+    private fun handleCallState(state: Int, phoneNumber: String?) {
+        when (state) {
+            TelephonyManager.CALL_STATE_RINGING -> {
+                // ÇAĞRI GELDİ - Overlay'i HEMEN göster
+                showCallOverlay(phoneNumber ?: "Bilinmiyor")
+            }
+            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                // Çağrı kabul edildi veya çıkış yapıldı
+            }
+            TelephonyManager.CALL_STATE_IDLE -> {
+                // Çağrı bitti
+            }
+        }
+    }
+
+    private fun showCallOverlay(callerNumber: String) {
+        val intent = Intent(this, CallOverlayActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(CallOverlayActivity.EXTRA_CALLER_NUMBER, callerNumber)
+        }
+        startActivity(intent)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun unregisterPhoneListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (telephonyCallback as? TelephonyCallback)?.let {
+                telephonyManager?.unregisterTelephonyCallback(it)
+            }
+        } else {
+            telephonyManager?.listen(phoneStateListener, PhoneStateListener.LISTEN_NONE)
+        }
+    }
+}
